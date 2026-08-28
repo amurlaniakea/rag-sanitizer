@@ -33,6 +33,7 @@ only raises a SUSPECT signal when a structural mismatch is present.
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass
 
 
@@ -62,14 +63,49 @@ def detect_multimodal(
             reason=f"declared image missing/unreadable: {image_path}", flagged=True
         )
 
-    # Caption mismatch: a "caption:" field that does not appear in the body text.
-    m = _caption_line(doc_text)
-    if m is not None and m not in doc_text:
-        return MultimodalResult(
-            reason="caption references content absent from document body", flagged=True
-        )
+    # Caption mismatch: a "caption:" field whose content does NOT appear in the
+    # document body once the caption line itself is removed. We compare against the
+    # body excluding the caption line (not against the whole doc_text, which would
+    # always contain the substring we just extracted).
+    caption = _caption_line(doc_text)
+    if caption is not None:
+        body_without_caption = _body_without_caption_line(doc_text)
+        if not _caption_supported_by_body(caption, body_without_caption):
+            return MultimodalResult(
+                reason="caption references content absent from document body", flagged=True
+            )
 
     return MultimodalResult(reason=None, flagged=False)
+
+
+def _body_without_caption_line(text: str) -> str:
+    """Return ``text`` with any ``caption:`` line removed (for mismatch comparison)."""
+    kept = []
+    for line in text.splitlines():
+        low = line.lower().lstrip("-* ").strip()
+        if low.startswith("caption:"):
+            continue
+        kept.append(line)
+    return "\n".join(kept)
+
+
+def _caption_supported_by_body(caption: str, body: str) -> bool:
+    """True if the caption content is present in the body (excluding the caption line).
+
+    Uses token overlap so a caption like "see chart showing record performance"
+    is considered supported only if those words actually appear in the rest of the
+    document. A caption that references content absent from the body returns False
+    (mismatch -> flag).
+    """
+    cap_tokens = set(re.findall(r"[A-Za-z0-9]+", caption.lower()))
+    if not cap_tokens:
+        # Empty caption: nothing to support, treat as supported (no mismatch).
+        return True
+    body_tokens = set(re.findall(r"[A-Za-z0-9]+", body.lower()))
+    # Require a meaningful fraction of caption tokens to be present in the body.
+    # A caption that does not relate to the body yields low overlap -> mismatch.
+    overlap = len(cap_tokens & body_tokens) / len(cap_tokens)
+    return overlap >= 0.5
 
 
 def _caption_line(text: str) -> str | None:

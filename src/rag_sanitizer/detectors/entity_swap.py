@@ -39,18 +39,157 @@ class EntitySwapResult:
 
 
 _ENTITY_RE = re.compile(
-    r"(?P<money>\$\s?\d[\d.,]*)|"
-    r"(?P<year>\b(19|20)\d{2}\b)|"
-    r"(?P<pct>\b\d{1,3}\s?%)|"
-    r"(?P<org>\b[A-Z][A-Za-z0-9]+(?:\s[A-Z][A-Za-z0-9]+){0,2}\b)"
+    r"(?P<money>\$\s?\d[\d.,]*)"
+    r"|(?P<year>\b(19|20)\d{2}\b)"
+    r"|(?P<pct>\b\d{1,3}\s?%)"
+    r"|(?P<org>\b[A-Z][A-Za-z0-9]+(?:\s[A-Z][A-Za-z0-9]+){0,2}\b)"
 )
+
+# Function/start-of-sentence words that are NOT proper nouns / organizations.
+# Excluded so generic prose ("The report shows...", "This year...") does not flag.
+_ORG_STOPWORDS = {
+    "the",
+    "this",
+    "that",
+    "these",
+    "those",
+    "our",
+    "we",
+    "i",
+    "you",
+    "they",
+    "he",
+    "she",
+    "it",
+    "a",
+    "an",
+    "and",
+    "or",
+    "but",
+    "if",
+    "then",
+    "else",
+    "when",
+    "where",
+    "why",
+    "how",
+    "what",
+    "who",
+    "which",
+    "whose",
+    "while",
+    "although",
+    "because",
+    "since",
+    "after",
+    "before",
+    "during",
+    "between",
+    "among",
+    "against",
+    "within",
+    "without",
+    "upon",
+    "across",
+    "through",
+    "their",
+    "his",
+    "her",
+    "its",
+    "my",
+    "your",
+    "in",
+    "on",
+    "at",
+    "by",
+    "to",
+    "of",
+    "for",
+    "with",
+    "from",
+    "as",
+    "is",
+    "are",
+    "was",
+    "were",
+    "be",
+    "been",
+    "being",
+    "has",
+    "have",
+    "had",
+    "do",
+    "does",
+    "did",
+    "will",
+    "would",
+    "should",
+    "could",
+    "may",
+    "might",
+    "must",
+    "can",
+    "not",
+    "no",
+    "yes",
+    "all",
+    "any",
+    "each",
+    "every",
+    "both",
+    "such",
+    "same",
+    "other",
+    "one",
+    "two",
+    "three",
+    "first",
+    "second",
+    "next",
+    "last",
+    "new",
+    "old",
+    "more",
+    "most",
+    "less",
+    "few",
+    "many",
+    "also",
+    "only",
+    "than",
+    "over",
+    "under",
+}
+
+
+def _is_real_org(token_span: str) -> bool:
+    """Filter a matched ORG span: drop function words and single common nouns.
+
+    A span is treated as a real organization/proper noun only if:
+      - it is an ALL-CAPS acronym (e.g. "NASA", "IBM"), or
+      - it has 2+ capitalized words (e.g. "Atlas Ventures"), and
+      - none of its words is a stopword.
+    """
+    words = token_span.split()
+    if any(w.lower() in _ORG_STOPWORDS for w in words):
+        return False
+    if len(words) >= 2:
+        return True
+    # single word: only ALL-CAPS acronyms (2+ letters) count
+    return len(words) == 1 and words[0].isupper() and len(words[0]) >= 2
 
 
 def extract_entities(text: str) -> set[str]:
     found = set()
     for m in _ENTITY_RE.finditer(text):
         for kind, val in m.groupdict().items():
-            if val:
+            if not val:
+                continue
+            if kind == "org":
+                if not _is_real_org(val.strip()):
+                    continue
+                found.add(f"org:{val.strip()}")
+            else:
                 found.add(f"{kind}:{val.strip()}")
     return found
 
