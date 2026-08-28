@@ -52,23 +52,47 @@ rag-sanitizer scan fixtures/corpus.jsonl --out report.json
 
 # O contra un directorio de .txt/.md (modo no supervisado: usa el centroide mayoritario)
 rag-sanitizer scan ./mi-corpus --out report.md
+
+# Embedder real (sentence-transformers, extra real-embeddings):
+rag-sanitizer scan ./mi-corpus --embedder real
+
+# Multimodal CLIP (extra multimodal; requiere torch+transformers):
+rag-sanitizer scan ./mi-corpus --multimodal clip
+
+# Perfil de entidades conocidas del dominio (cierra KI-7, sin NER):
+rag-sanitizer scan ./mi-corpus --entity-profile entidades.json
+#   entidades.json -> {"known": ["Madrid", "Spain", "Atlas Ventures"]}
+```
+
+La fast suite (por defecto) usa embeddings Dummy y detector multimodal heurístico
+(sin descargas). Para validar la lógica contra embeddings semánticos reales:
+
+```bash
+pip install -e ".[real-embeddings,multimodal]"
+pytest -m real_embeddings   # descarga MiniLM (~80MB) + CLIP (~600MB); skip si faltan extras
 ```
 
 El reporte incluye `corpus_sha256` (reproducibilidad) y, por documento, el
 veredicto (`CLEAN` / `SUSPECT` / `POISON`) con sus razones legibles.
 
-## Honestidad (lo que v0.1 NO es)
+## Honestidad (qué es y qué NO es v0.2)
 
 - **No** es defensa post-retrieval (eso lo hacen RAGSentinel / Trustworthy RAG).
 - **No** reescribe ni repara documentos; solo marca / quarantina.
-- Embeddings de la *fast suite* son deterministas y Dummy (no semánticos): validan
-  la **lógica** del escáner, no la calidad del embedding (feature 002).
-- El detector multimodal v0.1 es heurístico; la detección por embeddings CLIP es
-  feature 002.
-- Umbrales por defecto calibrados en fixture sintético; necesitan validación contra
-  corpus reales del usuario (riesgo de falsos positivos en corpus heterogéneo).
+- v0.2 CIERRA KI-1 (embedder real inyectable vía `--embedder real`, tras el
+  Protocol `Embedder`) y KI-2 (CLIP real tras `--multimodal clip`; el heurístico
+  v0.1 queda como fallback). La fast suite sigue con Dummy + heurístico (sin red).
+- KI-7 mitigado (no eliminado del todo): `--entity-profile` con entidades conocidas
+  del usuario detecta swap de una sola palabra capitalizada (Madrid→Beijing) sin NER
+  pesado. No usa modelo NER; el hueco de entidades en minúscula no declaradas queda
+  fuera (trade-off documentado en KNOWN_ISSUES KI-7/KI-8).
+- Umbrales por defecto (k=3.0 mimicry, 0.5 caption, 0.5 CLIP) calibrados en fixture
+  sintético; necesitan validación contra corpus reales del usuario.
+- KI-8: RESUELTO — CLIP se carga con `revision` pinneada por defecto
+  (`DEFAULT_CLIP_REVISION` en `clip_embedder.py`); bandit no marca B615. Override con
+  `--multimodal clip` + `model_name="org/model@<sha>"` si requieres otro commit.
 
-Ver `KNOWN_ISSUES` en la spec de la bóveda y `RESEARCH.md` para las fuentes.
+Ver `KNOWN_ISSUES` y `RESEARCH.md` para las fuentes y limitaciones.
 
 ## Licencia
 

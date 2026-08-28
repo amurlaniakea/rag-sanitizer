@@ -67,3 +67,34 @@ class DummyDeterministicEmbedder:
         if norm == 0.0:
             return [0.0] * self.dim
         return [v / norm for v in vec]
+
+
+class SentenceTransformerEmbedder:
+    """Real embedding backend (sentence-transformers) implementing the ``Embedder`` Protocol.
+
+    Lazily imports ``sentence_transformers`` so the fast suite (DummyDeterministicEmbedder)
+    needs no network or model download. Closed vector dimension depends on the model
+    (MiniLM-L6-v2 -> 384). Used by the ``real_embeddings`` test suite (AC-1/AC-2).
+
+    Example
+    -------
+    >>> emb = SentenceTransformerEmbedder("sentence-transformers/all-MiniLM-L6-v2")
+    >>> vec = emb.embed("The Q3 2025 revenue was $4.2M")
+    >>> len(vec)
+    384
+    """
+
+    def __init__(self, model_name: str = "sentence-transformers/all-MiniLM-L6-v2") -> None:
+        try:
+            from sentence_transformers import SentenceTransformer
+        except ImportError as exc:  # pragma: no cover - depends on optional extra
+            raise ImportError(
+                "sentence-transformers not installed. Install extra: "
+                "pip install -e '.[real-embeddings]'"
+            ) from exc
+        self._model = SentenceTransformer(model_name)
+        self.model_name = model_name
+
+    def embed(self, text: str) -> list[float]:
+        vec = self._model.encode(text, normalize_embeddings=True, convert_to_numpy=True)
+        return vec.tolist()

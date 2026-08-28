@@ -29,12 +29,20 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+# Minimum number of trusted-profile documents required for the k*sigma threshold to
+# be statistically meaningful. Below this, the per-document spread (sigma) estimated
+# from n points is unstable noise, so any mimicry verdict is low-confidence and must
+# be surfaced as such rather than reported silently as reliable.
+MIN_PROFILE_SIZE = 10
+
 
 @dataclass
 class MimicryResult:
     distance: float
     threshold: float
     flagged: bool
+    low_confidence: bool = False
+    note: str | None = None
 
 
 def _cosine(a: list[float], b: list[float]) -> float:
@@ -72,9 +80,21 @@ def detect_mimicry(
 
     Uses cosine distance to the trusted centroid. Flagged when the distance exceeds
     ``k * spread`` of the trusted set. Order-independent (AC-2).
+
+    When ``len(profile_vectors) < MIN_PROFILE_SIZE`` the k*sigma threshold is built on
+    too few points to be reliable; the result is still computed (so callers get a
+    deterministic answer) but ``low_confidence`` is set and ``note`` explains why, so
+    the scanner can surface it instead of emitting a silently unreliable verdict.
     """
     if not profile_vectors:
         return MimicryResult(0.0, 0.0, False)
+    low_confidence = len(profile_vectors) < MIN_PROFILE_SIZE
+    note = (
+        f"profile too small for reliable k-sigma threshold "
+        f"(n={len(profile_vectors)} < {MIN_PROFILE_SIZE})"
+        if low_confidence
+        else None
+    )
     centroid = _centroid(profile_vectors)
     spread = _spread(profile_vectors, centroid)
     threshold = k * spread
@@ -82,4 +102,10 @@ def detect_mimicry(
     # Guard against degenerate zero-spread profiles.
     if spread == 0.0:
         threshold = 0.0
-    return MimicryResult(distance=dist, threshold=threshold, flagged=dist > threshold)
+    return MimicryResult(
+        distance=dist,
+        threshold=threshold,
+        flagged=dist > threshold,
+        low_confidence=low_confidence,
+        note=note,
+    )

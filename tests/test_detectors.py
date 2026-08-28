@@ -32,7 +32,7 @@ import os
 import tempfile
 
 from rag_sanitizer.detectors.entity_swap import detect_entity_swap, extract_entities
-from rag_sanitizer.detectors.multimodal import detect_multimodal
+from rag_sanitizer.detectors.multimodal import HeuristicMultimodalDetector
 
 
 # BUG 1: caption mismatch con imagen EXISTENTE (no el caso de imagen faltante).
@@ -47,7 +47,7 @@ def test_bug1_caption_mismatch_image_present():
             "Our headquarters is in Madrid, Spain.\n"
             "caption: see diagram of the volcanic eruption in Iceland"
         )
-        res = detect_multimodal(doc, img)
+        res = HeuristicMultimodalDetector().detect(doc, img)
         assert res.flagged is True
         assert "caption references content absent" in res.reason
 
@@ -63,7 +63,7 @@ def test_bug1_caption_consistent_image_present():
             "Our headquarters is in Madrid, Spain.\n"
             "caption: Q3 2025 revenue 4.2M enterprise customers Madrid Spain"
         )
-        res = detect_multimodal(doc, img)
+        res = HeuristicMultimodalDetector().detect(doc, img)
         assert res.flagged is False
 
 
@@ -78,19 +78,19 @@ def test_bug1_caption_partial_near_threshold():
             "The Q3 2025 revenue was $4.2M with 312 enterprise customers in Madrid.\n"
             "caption: revenue Madrid"
         )
-        assert detect_multimodal(doc, img).flagged is False
+        assert HeuristicMultimodalDetector().detect(doc, img).flagged is False
         # caption: "revenue volcano" (2 tokens) vs body solo "revenue" -> overlap 0.5 -> OK (>=0.5).
         doc2 = (
             "The Q3 2025 revenue was $4.2M with 312 enterprise customers in Madrid.\n"
             "caption: revenue volcano"
         )
-        assert detect_multimodal(doc2, img).flagged is False
+        assert HeuristicMultimodalDetector().detect(doc2, img).flagged is False
         # caption: "volcano iceberg hurricane" (3 tokens) vs body 0 -> overlap 0.0 -> flag.
         doc3 = (
             "The Q3 2025 revenue was $4.2M with 312 enterprise customers in Madrid.\n"
             "caption: volcano iceberg hurricane"
         )
-        assert detect_multimodal(doc3, img).flagged is True
+        assert HeuristicMultimodalDetector().detect(doc3, img).flagged is True
 
 
 # BUG 2: prosa genérica con variación de redacción NO debe marcar entity-swap.
