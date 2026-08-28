@@ -63,6 +63,17 @@ tramo: escáner determinista y barato que marca el corpus antes de `chunk + embe
 ## Limitaciones de la evidencia
 
 - Conteo de papers arXiv 2026 por sub-nicho: NO disponible (API rate-limited). Los
-  papers arriba están confirmados individualmente, no por volumen.
+  papers arriba están confirmados individualmente (abs), no por volumen.
 - La efectividad contra embeddings reales (MiniLM/OpenAI/CLIP) no está medida en
   v0.1 (fast suite usa embeddings dummy deterministas); es feature 002.
+
+## Known issues (v0.1)
+
+- **KI-7 (trade-off del fix entity-swap, post-auditoría Claude):** el filtro
+  `_is_real_org` exige 2+ palabras capitalizadas o sigla ALL-CAPS de una sola
+  palabra. Efecto colateral: ya NO detecta el swap de un nombre propio de UNA sola
+  palabra en mayúscula-minúscula (p.ej. `Madrid` → `Beijing`). La auditoría de
+  Claude lo confirmó: `profile="Our headquarters is in Madrid, Spain."` +
+  `doc="Our headquarters is in Beijing, Spain."` → `flagged=False`. Se aceptó como
+  trade-off (eliminó falsos positivos masivos de "The/This/Our") y se deja para
+  NER real en v0.2. No invalida el fix.
