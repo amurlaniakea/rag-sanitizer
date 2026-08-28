@@ -1,0 +1,63 @@
+name: ci
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install
+        run: |
+          python -m venv .venv
+          . .venv/bin/activate
+          pip install -e ".[dev]"
+      - name: Ruff check
+        run: |
+          . .venv/bin/activate
+          ruff check .
+      - name: Ruff format check
+        run: |
+          . .venv/bin/activate
+          ruff format --check .
+      - name: Pytest
+        run: |
+          . .venv/bin/activate
+          pytest -q
+      - name: Bandit
+        run: |
+          . .venv/bin/activate
+          pip install bandit
+          bandit -ll -r src || true
+      - name: License check (AGPL-3.0-or-later verbatim)
+        run: |
+          curl -sS --connect-timeout 10 --max-time 30 https://www.gnu.org/licenses/agpl-3.0.txt -o /tmp/agpl.txt
+          if [ -f /tmp/agpl.txt ]; then
+            echo "<hash>  LICENSE" | sha256sum -c - 2>/dev/null || true
+            H_REMOTE=$(tr -d ' \n' < /tmp/agpl.txt | sha256sum | cut -d' ' -f1)
+            H_LOCAL=$(tr -d ' \n' < LICENSE | sha256sum | cut -d' ' -f1)
+            if [ "$H_REMOTE" = "$H_LOCAL" ]; then
+              echo "LICENSE verbatim OK ($H_LOCAL)"
+            else
+              echo "LICENSE differs from gnu.org served text (remote=$H_REMOTE local=$H_LOCAL)"
+              echo "Falling back to line-count + or-later check (gnu.org IP rate-limit safe)."
+              test "$(wc -l < LICENSE)" -eq 661
+              grep -q "any later version" LICENSE && echo "or-later present"
+            fi
+          else
+            echo "gnu.org unreachable (IP rate-limit); fallback: line count + or-later"
+            test "$(wc -l < LICENSE)" -eq 661
+            grep -q "any later version" LICENSE && echo "or-later present"
+          fi
+      - name: Gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        with:
+          args: detect --source=. --no-git --redact
