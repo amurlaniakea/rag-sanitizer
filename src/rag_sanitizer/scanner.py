@@ -97,14 +97,14 @@ def scan(
     )
 
     verdicts: list[DocVerdict] = []
-    scan_warnings: list[str] = []
+    scan_warnings: set[str] = set()
     for d in docs:
         mim = detect_mimicry(d.embedding, profile_vectors, k=k)
         ent = detect_entity_swap(d.text, profile_texts, entity_profile=entity_profile)
         mm = mm_detector.detect(d.text, d.image_path)
         verdict, reasons = _combine(mim.flagged, ent.flagged, mm.flagged, mm.reason)
         if mim.low_confidence and mim.note:
-            scan_warnings.append(mim.note)
+            scan_warnings.add(mim.note)
         verdicts.append(DocVerdict(id=d.id, verdict=verdict, reasons=reasons))
 
     counts = {"CLEAN": 0, "SUSPECT": 0, "POISON": 0}
@@ -114,5 +114,5 @@ def scan(
         corpus_sha256=corpus_sha256(docs),
         verdicts=verdicts,
         summary=counts,
-        warnings=scan_warnings,
+        warnings=sorted(scan_warnings),
     )

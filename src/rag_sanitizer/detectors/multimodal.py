@@ -110,12 +110,18 @@ class ClipMultimodalDetector:
 
     Compares the document text against its declared image in CLIP space. If the image
     is missing, falls back to the structural flag (same as heuristic). If similarity is
-    below ``threshold`` (default 0.5 on the sigmoid(logit) score), raises SUSPECT with a
-    ``clip_score`` for evidence. Never returns a "clear" verdict.
+    below ``threshold`` (default 0.25 on the temperature-scaled cosine score, see
+    ``ClipEmbedder.similarity``), raises SUSPECT with a ``clip_score`` for evidence.
+    Never returns a "clear" verdict.
+
+    Threshold calibration (measured, synthetic 64px solid images): text-image matches
+    score ~0.27-0.32; mismatches ~0.16-0.24. The default 0.25 sits between them, so a
+    legitimate match is not falsely flagged. The margin is narrow on synthetic images;
+    recalibrate against real user images before relying on this in production (KI-10).
     """
 
     def __init__(
-        self, threshold: float = 0.5, model_name: str = "openai/clip-vit-base-patch32"
+        self, threshold: float = 0.25, model_name: str = "openai/clip-vit-base-patch32"
     ) -> None:
         from .clip_embedder import ClipEmbedder
 

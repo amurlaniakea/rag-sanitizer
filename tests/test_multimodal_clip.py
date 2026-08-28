@@ -57,9 +57,25 @@ def test_clip_flags_text_image_mismatch():
         img = os.path.join(d, "red.png")
         _make_png(img, (255, 0, 0))
         doc = "The volcanic eruption in Iceland released ash across the north atlantic."
-        det = ClipMultimodalDetector(threshold=0.5)
+        # Uses the recalibrated default threshold (0.25); mismatch scores ~0.20, below it.
+        det = ClipMultimodalDetector()
         res = det.detect(doc, img)
         assert res.flagged is True
+        assert res.score is not None
+
+
+@pytest.mark.skipif(not _have_clip(), reason="transformers/torch not installed (extra multimodal)")
+def test_clip_does_not_flag_text_image_match():
+    # Regression for the threshold-recalibration bug: a legitimate text-image match must
+    # NOT be flagged. With the default threshold 0.25, matches score ~0.27-0.32 (measured),
+    # above the threshold. This is the positive case the mismatch-only test missed.
+    with tempfile.TemporaryDirectory() as d:
+        img = os.path.join(d, "red.png")
+        _make_png(img, (200, 30, 30))
+        doc = "a red square on a white background"
+        det = ClipMultimodalDetector()
+        res = det.detect(doc, img)
+        assert res.flagged is False
         assert res.score is not None
 
 

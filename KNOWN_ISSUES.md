@@ -55,3 +55,12 @@ territorio donde v0.2 (embeddings reales CLIP/MiniLM + NER) debe entrar.
   `low_confidence=True` y `note="profile too small for reliable k-sigma threshold
   (n=X < 10)"`; el scanner lo propaga a `reasons` para que el veredicto nunca sea silencioso.
   No es un fallback que oculta el problema: es señalización explícita de baja confianza.
+
+- **KI-10 (threshold de CLIP calibrado sobre imagenes sinteticas, margen estrecho):**
+  ClipMultimodalDetector usa threshold=0.25 sobre el score cosine escalado por temperatura
+  (logit/100). Calibrado con imagenes sinteticas de 64px: match ~0.27-0.32, mismatch
+  ~0.16-0.24, asi el default separa ambos sin falso positivo en match legitimo. Pero el
+  margen es estrecho (~0.03) y medido solo en cuadros de color solido; con imagenes reales
+  del usuario el rango puede solaparse. Recalibrar threshold contra el corpus real antes de
+  usar en produccion. El test test_clip_does_not_flag_text_image_match fija el caso positivo
+  (match no se marca) que antes faltaba y ocultaba este bug.

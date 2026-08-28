@@ -103,6 +103,9 @@ def detect_mimicry(
     if spread == 0.0:
         threshold = 0.0
     return MimicryResult(
-        distance=dist, threshold=threshold, flagged=dist > threshold,
-        low_confidence=low_confidence, note=note,
+        distance=dist,
+        threshold=threshold,
+        flagged=dist > threshold,
+        low_confidence=low_confidence,
+        note=note,
     )
