@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "rag-sanitizer"
-version = "0.1.0"
+version = "0.2.0"
 description = "Escáner de corpus RAG antes de la ingestión: detecta documentos poison (semantic mimicry, entity-swap, visual poison) y los marca/quarantina antes de chunk+embed."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -12,12 +12,12 @@ license = "AGPL-3.0-or-later"
 license-files = ["LICENSE"]
 authors = [{ name = "Pedro Sordo Martínez", email = "amurlaniakea@gmail.com" }]
 keywords = ["rag", "poisoning", "security", "corpus", "ingestion", "llm-security", "agpl"]
-dependencies = ["typer>=0.12", "pydantic>=2.0"]
+dependencies = ["typer>=0.12", "click>=8.1", "pydantic>=2.0"]
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0", "ruff>=0.5", "bandit>=1.7"]
 real-embeddings = ["sentence-transformers>=2.5"]
-multimodal = ["pillow>=10.0", "imagehash>=4.3"]
+multimodal = ["pillow>=10.0", "imagehash>=4.3", "transformers>=4.40", "torch>=2.0"]
 
 [project.scripts]
 rag-sanitizer = "rag_sanitizer.cli:app"
@@ -32,3 +32,6 @@ select = ["E", "F", "I", "W", "B", "C4", "UP"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
+markers = [
+    "real_embeddings: tests that require sentence-transformers / transformers+torch (skip if extras not installed)",
+]

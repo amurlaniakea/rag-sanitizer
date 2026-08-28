@@ -18,16 +18,16 @@
 # License along with this program. If not, see
 # <https://www.gnu.org/licenses/>.
 
-"""Multimodal (visual poison) detector — v0.1 heuristic (KI-2).
+"""Multimodal (visual poison) detector.
+
+KI-2: v0.1 used a cheap heuristic (image missing / caption mismatch). v0.2 adds a
+real CLIP-based detector (text+image similarity) behind ``ClipMultimodalDetector``.
+Both are deliberately conservative: they never clear an image as safe, they only
+raise a SUSPECT signal with evidence. ``select_multimodal`` picks the backend.
 
 Vis-Poison (2608.20756) shows the poisoned image itself is the payload, without
-touching caption/metadata. v0.1 uses a cheap heuristic: when a document carries an
-image, it flags SUSPECT if the image file is missing/unreadable OR if a ``caption``
-field disagrees with the document text (caption/text mismatch). Real embedding-based
-detection (CLIP) is feature 002.
-
-This detector is deliberately conservative: it never clears an image as safe, it
-only raises a SUSPECT signal when a structural mismatch is present.
+touching caption/metadata; CLIP catches the case where the image content disagrees
+with the document text even when caption/metadata look fine.
 """
 
 from __future__ import annotations
@@ -35,51 +35,47 @@ from __future__ import annotations
 import os
 import re
 from dataclasses import dataclass
+from typing import Protocol, runtime_checkable
 
 
 @dataclass
 class MultimodalResult:
     reason: str | None
     flagged: bool
+    score: float | None = None
 
 
-def detect_multimodal(
-    doc_text: str,
-    image_path: str | None,
-) -> MultimodalResult:
-    """Heuristic visual-poison check for a single document.
+@runtime_checkable
+class MultimodalDetector(Protocol):
+    """Multimodal backend contract."""
 
-    Returns ``flagged=True`` (SUSPECT) only on a structural mismatch:
-      - image declared but file missing/unreadable, or
-      - a ``caption:`` line in the text disagrees with the surrounding body.
-    Otherwise ``flagged=False`` (not an automatic clear — see KI-2).
-    """
-    # No image referenced: nothing to flag multimodally.
-    if not image_path:
-        return MultimodalResult(reason=None, flagged=False)
+    def detect(self, doc_text: str, image_path: str | None) -> MultimodalResult: ...
 
-    if not os.path.isfile(image_path):
-        return MultimodalResult(
-            reason=f"declared image missing/unreadable: {image_path}", flagged=True
-        )
 
-    # Caption mismatch: a "caption:" field whose content does NOT appear in the
-    # document body once the caption line itself is removed. We compare against the
-    # body excluding the caption line (not against the whole doc_text, which would
-    # always contain the substring we just extracted).
-    caption = _caption_line(doc_text)
-    if caption is not None:
-        body_without_caption = _body_without_caption_line(doc_text)
-        if not _caption_supported_by_body(caption, body_without_caption):
+# --- Heuristic backend (v0.1, no heavy deps) ---------------------------------
+
+
+class HeuristicMultimodalDetector:
+    """v0.1 heuristic: image missing/unreadable OR caption/text mismatch (token overlap)."""
+
+    def detect(self, doc_text: str, image_path: str | None) -> MultimodalResult:
+        if not image_path:
+            return MultimodalResult(reason=None, flagged=False)
+        if not os.path.isfile(image_path):
             return MultimodalResult(
-                reason="caption references content absent from document body", flagged=True
+                reason=f"declared image missing/unreadable: {image_path}", flagged=True
             )
-
-    return MultimodalResult(reason=None, flagged=False)
+        caption = _caption_line(doc_text)
+        if caption is not None:
+            body = _body_without_caption_line(doc_text)
+            if not _caption_supported_by_body(caption, body):
+                return MultimodalResult(
+                    reason="caption references content absent from document body", flagged=True
+                )
+        return MultimodalResult(reason=None, flagged=False)
 
 
 def _body_without_caption_line(text: str) -> str:
-    """Return ``text`` with any ``caption:`` line removed (for mismatch comparison)."""
     kept = []
     for line in text.splitlines():
         low = line.lower().lstrip("-* ").strip()
@@ -90,20 +86,10 @@ def _body_without_caption_line(text: str) -> str:
 
 
 def _caption_supported_by_body(caption: str, body: str) -> bool:
-    """True if the caption content is present in the body (excluding the caption line).
-
-    Uses token overlap so a caption like "see chart showing record performance"
-    is considered supported only if those words actually appear in the rest of the
-    document. A caption that references content absent from the body returns False
-    (mismatch -> flag).
-    """
     cap_tokens = set(re.findall(r"[A-Za-z0-9]+", caption.lower()))
     if not cap_tokens:
-        # Empty caption: nothing to support, treat as supported (no mismatch).
         return True
     body_tokens = set(re.findall(r"[A-Za-z0-9]+", body.lower()))
-    # Require a meaningful fraction of caption tokens to be present in the body.
-    # A caption that does not relate to the body yields low overlap -> mismatch.
     overlap = len(cap_tokens & body_tokens) / len(cap_tokens)
     return overlap >= 0.5
 
@@ -114,3 +100,59 @@ def _caption_line(text: str) -> str | None:
         if low.startswith("caption:"):
             return line.split(":", 1)[1].strip()
     return None
+
+
+# --- CLIP backend (v0.2, extra "multimodal") --------------------------------
+
+
+class ClipMultimodalDetector:
+    """CLIP text+image similarity backend. Conservative: only raises SUSPECT with evidence.
+
+    Compares the document text against its declared image in CLIP space. If the image
+    is missing, falls back to the structural flag (same as heuristic). If similarity is
+    below ``threshold`` (default 0.5 on the sigmoid(logit) score), raises SUSPECT with a
+    ``clip_score`` for evidence. Never returns a "clear" verdict.
+    """
+
+    def __init__(
+        self, threshold: float = 0.5, model_name: str = "openai/clip-vit-base-patch32"
+    ) -> None:
+        from .clip_embedder import ClipEmbedder
+
+        self._clip = ClipEmbedder(model_name)
+        self.threshold = threshold
+
+    def detect(self, doc_text: str, image_path: str | None) -> MultimodalResult:
+        if not image_path:
+            return MultimodalResult(reason=None, flagged=False)
+        if not os.path.isfile(image_path):
+            return MultimodalResult(
+                reason=f"declared image missing/unreadable: {image_path}", flagged=True
+            )
+        sim = self._clip.similarity(doc_text, image_path)
+        if sim < self.threshold:
+            return MultimodalResult(
+                reason=(
+                    f"CLIP text-image similarity {sim:.3f} < {self.threshold} "
+                    "(visual poison suspect)"
+                ),
+                flagged=True,
+                score=sim,
+            )
+        return MultimodalResult(reason=None, flagged=False, score=sim)
+
+
+# --- Backend selection ------------------------------------------------------
+
+
+def select_multimodal(backend: str) -> MultimodalDetector:
+    """Return a multimodal detector by name.
+
+    ``backend="heuristic"`` -> no heavy deps (default for fast suite).
+    ``backend="clip"`` -> CLIP (requires the ``multimodal`` extra; raises ImportError if absent).
+    """
+    if backend == "heuristic":
+        return HeuristicMultimodalDetector()
+    if backend == "clip":
+        return ClipMultimodalDetector()
+    raise ValueError(f"unknown multimodal backend: {backend!r}")

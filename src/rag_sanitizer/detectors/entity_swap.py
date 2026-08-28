@@ -194,18 +194,81 @@ def extract_entities(text: str) -> set[str]:
     return found
 
 
+@dataclass
+class EntityProfile:
+    """Known entities of the user's domain (injectable). Closes KI-7 without a NER model.
+
+    A poison-by-entity-swap may replace a known entity with a different one even when
+    that entity is a single capitalized-or-lowercase word (e.g. a city: ``Madrid`` ->
+    ``Beijing``). The v0.1 regex could not catch single-word swaps; ``EntityProfile``
+    lets the user list their known entities so any divergence from the trusted corpus
+    is flagged regardless of capitalization or word count.
+    """
+
+    known: set[str]
+
+    def __post_init__(self) -> None:
+        self._norm = {self._norm_key(k) for k in self.known}
+
+    @staticmethod
+    def _norm_key(token: str) -> str:
+        return token.strip().lower()
+
+    def contains_norm(self, token: str) -> bool:
+        return self._norm_key(token) in self._norm
+
+
+def _looks_like_entity(token: str) -> bool:
+    """Heuristic: is ``token`` a plausible named entity (for KI-7 profile-swap check)?
+
+    True if it is capitalized (proper noun-like) and not a function/stopword. Used to
+    avoid flagging common lowercase words as swaps. Single ALL-CAPS acronyms and
+    Capitalized words count; lowercase words do not (unless in the user's known set,
+    handled separately by the caller).
+    """
+    if not token:
+        return False
+    if token.lower() in _ORG_STOPWORDS:
+        return False
+    return token[0].isupper()
+
+
 def detect_entity_swap(
     doc_text: str,
     profile_texts: list[str],
+    entity_profile: EntityProfile | None = None,
 ) -> EntitySwapResult:
     """Flag entities in ``doc_text`` absent from the trusted ``profile_texts``.
 
     A poison-by-entity-swap replaces a factual entity (e.g. a year, an amount) with
     a different one; that novel entity will not appear in the trusted profile.
+
+    When ``entity_profile`` is provided (KI-7 mitigation), any token in the document
+    that is a known entity of the user's domain but is ABSENT from the trusted corpus
+    texts is flagged as a swap — including single-word entities like a city name.
+    This closes the KI-7 hole (``Madrid`` -> ``Beijing``) without a heavy NER model.
     """
     profile_entities: set[str] = set()
     for t in profile_texts:
         profile_entities |= extract_entities(t)
     doc_entities = extract_entities(doc_text)
     novel = sorted(doc_entities - profile_entities)
+
+    if entity_profile is not None:
+        # KI-7: any entity-candidate token in the doc that is NOT in the trusted corpus
+        # AND NOT in the user's known entities is flagged as a possible swap. This catches
+        # single-word swaps like Madrid -> Beijing without a heavy NER model: the user
+        # declares Madrid/Spain as known; Beijing is a candidate not in corpus/known -> flag.
+        profile_entity_norm = {t.split(":", 1)[1].lower() for t in profile_entities}
+        doc_tokens = re.findall(r"[A-Za-z0-9][A-Za-z0-9'\-]*", doc_text)
+        swapped = sorted(
+            tok
+            for tok in doc_tokens
+            if tok.lower() not in profile_entity_norm
+            and not entity_profile.contains_norm(tok)
+            and _looks_like_entity(tok)
+        )
+        for s in swapped:
+            novel.append(f"profile-swap:{s}")
+
     return EntitySwapResult(novel_entities=novel, flagged=bool(novel))

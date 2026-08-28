@@ -15,17 +15,20 @@
 # GNU Affero General Public License for more details.
 #
 # You should have received a copy of the GNU Affero General Public
-# License along with this program. If not, see
+# License along with this program. if not, see
 # <https://www.gnu.org/licenses/>.
 
 """rag-sanitizer CLI (Typer)."""
 
 from __future__ import annotations
 
+import json
+
 import typer
 
 from .corpus import load_corpus
-from .embedder import DummyDeterministicEmbedder
+from .detectors.entity_swap import EntityProfile
+from .embedder import DummyDeterministicEmbedder, SentenceTransformerEmbedder
 from .report import print_report, write_report
 from .scanner import scan
 
@@ -39,10 +42,36 @@ def scan_cmd(
         None, "--out", help="Write report to .json or .md (default: stdout)"
     ),
     k: float = typer.Option(3.0, "--k", help="Mimicry outlier multiplier (k*sigma)"),
+    embedder: str = typer.Option(
+        "dummy", "--embedder", help="Embedding backend: dummy (fast) | real (sentence-transformers)"
+    ),
+    multimodal: str = typer.Option(
+        "heuristic", "--multimodal", help="Multimodal backend: heuristic (no deps) | clip (CLIP)"
+    ),
+    entity_profile: str | None = typer.Option(
+        None,
+        "--entity-profile",
+        help='Path to JSON file with {"known": ["entity", ...]} (closes KI-7)',
+    ),
 ) -> None:
     """Scan CORPUS and emit a verdict per document (CLEAN/SUSPECT/POISON)."""
-    docs = load_corpus(corpus, embedder=DummyDeterministicEmbedder())
-    report = scan(docs, k=k)
+    if embedder == "dummy":
+        emb = DummyDeterministicEmbedder()
+    elif embedder == "real":
+        emb = SentenceTransformerEmbedder()
+    else:
+        typer.echo(f"unknown --embedder: {embedder}", err=True)
+        raise typer.Exit(code=2)
+
+    docs = load_corpus(corpus, embedder=emb)
+
+    profile: EntityProfile | None = None
+    if entity_profile:
+        with open(entity_profile, encoding="utf-8") as fh:
+            data = json.load(fh)
+        profile = EntityProfile(known=set(data.get("known", [])))
+
+    report = scan(docs, k=k, entity_profile=profile, multimodal_backend=multimodal)
     if out:
         write_report(report, out)
         typer.echo(f"Report written to {out}")
